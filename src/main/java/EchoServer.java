@@ -10,13 +10,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class EchoServer {
     private ServerSocket serverSocket;
     private Map<String, Client> userToClient = new HashMap<>();
+    private static ExecutorService executor = Executors.newCachedThreadPool();
 
     public void start(int port) {
         try {
             serverSocket = new ServerSocket(port);
             System.out.println("Start server successfully!");
-
-            ExecutorService executor = Executors.newFixedThreadPool(5);
             executor.submit(() -> {
                 while (true) {
                     listenToClient();
@@ -51,8 +50,6 @@ public class EchoServer {
 
     public void listenToClient() throws IOException {
         Socket clientSocket = this.serverSocket.accept();
-//        PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
-//        out.println("HAHAHHA");
         Client client = new Client(clientSocket);
         String initMsg = client.readMsg();
         System.out.println("server receive message: " + initMsg);
@@ -133,31 +130,31 @@ public class EchoServer {
         EchoServer server = new EchoServer();
         server.start(port);
 
-        ExecutorService executor = Executors.newFixedThreadPool(5);
+        CompletionService completionService = new ExecutorCompletionService(executor);
         final AtomicInteger index = new AtomicInteger();
         Map<String, EchoClient> userToEchoClient = new ConcurrentHashMap<>();
-        List<FutureTask> tasks = new ArrayList<>();
-        for (int i=0;i<5;i++) {
-            FutureTask<EchoClient> t = new FutureTask<>(() -> {
+
+        int taskSize = 5;
+        for (int i=0;i<taskSize;i++) {
+            completionService.submit(() -> {
                 String name = "user" + index.getAndIncrement();
                 EchoClient client = new EchoClient(name);
                 userToEchoClient.put(name, client);
                 client.startConnection("127.0.0.1", port);
                 client.sendMessage("name=" + client.getName());
+
                 if (client.readMessage() != null) {
+                    System.out.println(name + " is connected");
                     return client;
                 } else {
                     return null;
                 }
             });
-            tasks.add(t);
-            executor.submit(t);
         }
-        for (FutureTask<EchoClient> task : tasks) {
-            EchoClient client = task.get();
-            if (task.isDone()) {
-                executor.submit(client::waitForMessage);
-            }
+        for (int i = 0; i < taskSize; i++) {
+            Future<EchoClient> f = completionService.take();
+            EchoClient client = f.get();
+            executor.submit(client::waitForMessage);
         }
 
         System.out.println(userToEchoClient);
